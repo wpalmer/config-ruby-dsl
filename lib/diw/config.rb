@@ -6,7 +6,7 @@ module DIW
 				@prefix = [*prefix]
 
 				if !block.nil?
-					instance_eval &block
+					instance_eval(&block)
 				end
 			end
 
@@ -31,7 +31,7 @@ module DIW
 			prefixed_method :has_section?
 			prefixed_method :has_var?
 			def push(*args, &block)
-				@base.push *args, &block
+				@base.push(*args, &block)
 			end
 
 			def method_missing(method, *args, &block)
@@ -45,7 +45,7 @@ module DIW
 				@stack = [{vars: {}, sections: {}}]
 
 				if !block.nil?
-					instance_eval &block
+					instance_eval(&block)
 				end
 			end
 
