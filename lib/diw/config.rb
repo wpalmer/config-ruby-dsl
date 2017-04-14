@@ -41,8 +41,9 @@ module DIW
 		end
 
 		class Config
-			def initialize(&block)
-				@stack = [{vars: {}, sections: {}}]
+			def initialize(frame = nil, &block)
+				frame = Frame.new(self) if frame.nil?
+				@stack = [frame]
 
 				if !block.nil?
 					instance_eval(&block)
@@ -68,7 +69,7 @@ module DIW
 				path = [ *path ]
 
 				@stack.reverse_each do |frame|
-					if frame[:sections].has_key?( path.join "." )
+					if frame.has_section?( path )
 						return true
 					end
 				end
@@ -89,8 +90,8 @@ module DIW
 					nil
 				elsif path.length > 1
 					@stack.reverse_each do |frame|
-						if frame[:sections].has_key?( path[0..-2].join "." )
-							if frame[:sections][ path[0..-2].join "." ].has_key?( path.last.to_sym )
+						if frame.has_section?( path[0..-2] )
+							if frame.has_section_var?( path[0..-2], path.last.to_sym )
 								return true
 							end
 						end
@@ -99,7 +100,7 @@ module DIW
 					return false
 				else
 					@stack.reverse_each do |frame|
-						if frame[:vars].has_key?( path.last.to_sym )
+						if frame.has_var?( path.last.to_sym )
 							return true
 						end
 					end
@@ -108,6 +109,16 @@ module DIW
 				end
 			end
 
+			# retrieve (or set) a var
+			#
+			# Retrieve a var:
+			# var :foo
+			#
+			# Set a var:
+			# var :foo, "newValue"
+			#
+			# Set multiple vars:
+			# var foo: "newValue", bar: "anotherValue"
 			def var(path, value = :NOT_PASSED)
 				if path.is_a? Hash
 					path.each do |k,v|
@@ -120,53 +131,104 @@ module DIW
 				path = [ *path ]
 				raise ArgumentError.new("Invalid path") if path.length == 0
 
+				## vvv checking if value was passed. If not, we're trying to retrieve an existing value vvv
 				if value == :NOT_PASSED
 					@stack.reverse_each do |frame|
 						if path.length > 1
-							if frame[:sections].has_key?( path[0..-2].join "." )
-								if frame[:sections][ path[0..-2].join "." ].has_key?( path.last.to_sym )
-									value = frame[:sections][ path[0..-2].join "." ][ path.last.to_sym ]
-									if value.respond_to? :call
-										return value.call(self)
-									else
-										return value
-									end
+							# vvv checking for all-but-last of path, as section name vvv
+							if frame.has_section?( path[0..-2] )
+								# vvv checking if that section contains the last component of the path vvv
+								if frame.has_section_var?( path[0..-2], path.last.to_sym )
+									return frame.get_section_var( path[0..-2], path.last.to_sym )
 								end
 							end
-						elsif frame[:vars].has_key?( path.last.to_sym )
-							value = frame[:vars][ path.last.to_sym ]
-							if value.respond_to? :call
-								return value.call(self)
-							else
-								return value
-							end
+						# vvv only one component in path, check if the base of this frame has it as a var vvv
+						elsif frame.has_var?( path.last.to_sym )
+							return frame.get_var( path.last.to_sym )
 						end
 					end
 
+					# vvv found nothing, error vvv
 					raise ArgumentError.new("Unknown path '#{path}'")
 				end
 
 				if path.length > 1
+					# vvv iterate over each element of the path, creating sections as needed vvv
 					(1..(path.length - 1)).each do |i|
-						if !@stack.last[:sections].has_key?( path[0..(-1 * i - 1)].join "." )
-							@stack.last[:sections][ path[0..(-1 * i - 1)].join "." ] = { }
+						if !@stack.last.has_section?( path[0..(-1 * i - 1)] )
+							@stack.last.set_section( path[0..(-1 * i - 1)] )
 						end
 					end
 
-					return @stack.last[:sections][ path[0..-2].join "." ][ path.last.to_sym ] = value
+					return @stack.last.set_section_var( path[0..-2], path.last.to_sym, value )
 				end
 
-				return @stack.last[:vars][ path.last.to_sym ] = value
+				return @stack.last.set_var( path.last.to_sym, value )
 			end
 
-			def push(&block)
-				@stack.push({vars: {}, sections: {}})
-				instance_eval &block
+			def push(frame = nil, &block)
+				frame = Frame.new(self) if frame.nil?
+				@stack.push( frame )
+
+				if !block.nil?
+					instance_eval(&block)
+				end
 			end
 
 			def pop
 				@stack.pop
 				self
+			end
+		end
+
+		class Frame
+			def initialize(cfg)
+				@cfg = cfg
+				@sections = {}
+				@vars = {}
+			end
+
+			def has_section?(path)
+				@sections.has_key?( path.join "." )
+			end
+
+			def set_section(path, vars = {})
+				@sections[ path.join "." ] = {}
+				vars.each {|k,v| set_section_var path, k, v }
+			end
+
+			def has_var?(name)
+				@vars.has_key?( name )
+			end
+
+			def get_var(name)
+				value = @vars[ name ]
+				if value.respond_to? :call
+					return value.call(@cfg)
+				else
+					return value
+				end
+			end
+
+			def set_var(name, value)
+				@vars[ name ] = value
+			end
+
+			def has_section_var?(section_path, name)
+				has_section?(section_path) and @sections[section_path.join "."].has_key?(name)
+			end
+
+			def get_section_var(section_path, name)
+				value = @sections[section_path.join "."][ name ]
+				if value.respond_to? :call
+					return value.call(@cfg)
+				else
+					return value
+				end
+			end
+
+			def set_section_var(section_path, name, value)
+				@sections[section_path.join "."][ name ] = value
 			end
 		end
 	end
